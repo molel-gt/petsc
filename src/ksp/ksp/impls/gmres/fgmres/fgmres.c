@@ -62,6 +62,15 @@ static PetscErrorCode KSPFGMRESCycle(PetscInt *itcount, KSP ksp)
   PetscInt    loc_it;                /* local count of # of dir. in Krylov space */
   PetscInt    max_k = fgmres->max_k; /* max # of directions Krylov space */
   Mat         Amat, Pmat;
+  PetscInt    d = 3;
+  PetscReal   max_cr = 0.99;
+  PetscReal   min_cr = 0.175;
+  PetscInt    m_min = 30;
+  PetscInt    m_max = max_k;
+  PetscInt    m_curr = 30;
+  PetscInt    m_prev = 30;
+  PetscReal   cr = 1.0;
+  PetscReal   prev_norm;
 
   PetscFunctionBegin;
   /* Number of pseudo iterations since last restart is the number
@@ -81,6 +90,7 @@ static PetscErrorCode KSPFGMRESCycle(PetscInt *itcount, KSP ksp)
   /* The first entry in the right-hand side of the Hessenberg system is just
      the initial residual norm */
   *RS(0) = res_norm;
+  prev_norm = res_norm;
 
   ksp->rnorm = res_norm;
   PetscCall(KSPLogResidualHistory(ksp, res_norm));
@@ -99,7 +109,23 @@ static PetscErrorCode KSPFGMRESCycle(PetscInt *itcount, KSP ksp)
   /* MAIN ITERATION LOOP BEGINNING*/
   /* keep iterating until we have converged OR generated the max number
      of directions OR reached the max number of iterations for the method */
-  while (!ksp->reason && loc_it < max_k && ksp->its < ksp->max_it) {
+  while (!ksp->reason && loc_it < m_curr && ksp->its < ksp->max_it) {
+    /* dynamically set the restart parameter */
+    if (cr > max_cr || ksp->its == 0){
+      m_curr = max_k;
+    }
+    else if(cr < min_cr) // converging well
+    {
+      m_curr = m_prev;
+    }
+    else {
+      if (m_prev - d >= m_min){
+        m_curr = m_prev - d;
+      }
+      else {
+        m_curr = m_max;
+      }
+    }
     if (loc_it) {
       PetscCall(KSPLogResidualHistory(ksp, res_norm));
       PetscCall(KSPMonitor(ksp, ksp->its, res_norm));
@@ -168,6 +194,7 @@ static PetscErrorCode KSPFGMRESCycle(PetscInt *itcount, KSP ksp)
     PetscCall(PetscObjectSAWsTakeAccess((PetscObject)ksp));
     ksp->its++;
     ksp->rnorm = res_norm;
+    cr = res_norm / prev_norm;
     PetscCall(PetscObjectSAWsGrantAccess((PetscObject)ksp));
 
     PetscCall((*ksp->converged)(ksp, ksp->its, res_norm, &ksp->reason, ksp->cnvP));
